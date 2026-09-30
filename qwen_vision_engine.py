@@ -209,27 +209,38 @@ def generate_optimized_prompt(
     ]
 
     print("[Easy-T8Enhancer] Generating official skill prompt with Qwen vision model...")
-    response = llm.create_chat_completion(
-        messages=messages,
-        max_tokens=max_tokens,
-        temperature=0.7,
-        top_p=0.9,
-    )
+    from comfy.model_management import throw_exception_if_processing_interrupted
 
-    result_text = response["choices"][0]["message"]["content"].strip()
+    result_text = ""
+    try:
+        collected = []
+        stream = llm.create_chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=0.7,
+            top_p=0.9,
+            stream=True,
+        )
+        for chunk in stream:
+            throw_exception_if_processing_interrupted()
+            delta = chunk["choices"][0].get("delta", {}).get("content")
+            if delta:
+                collected.append(delta)
+                print(delta, end="", flush=True)
+        print()
 
-    if "<think>" in result_text and "</think>" in result_text:
-        parts = result_text.split("</think>")
-        result_text = parts[-1].strip()
-
-    if unload_after_run:
-        print("[Easy-T8Enhancer] Unloading LLM and purging VRAM cache for downstream H3 diffusion...")
-        del llm
-        if chat_handler is not None:
-            del chat_handler
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
+        result_text = "".join(collected).strip()
+        if "<think>" in result_text and "</think>" in result_text:
+            result_text = result_text.split("</think>")[-1].strip()
+    finally:
+        if unload_after_run:
+            print("[Easy-T8Enhancer] Unloading LLM and purging VRAM cache for downstream H3 diffusion...")
+            del llm
+            if chat_handler is not None:
+                del chat_handler
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
 
     return result_text

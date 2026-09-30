@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-minimax-h3-easy-t8enhancer"
-version = "0.2.9"
+version = "0.3.0"
 description = "Local GGUF multimodal prompt enhancer for ComfyUI-MiniMaxH3-Easy suite with Qwen vision support, official H3 skill format, and interactive UI."
 readme = "README.md"
 requires-python = ">=3.10"
