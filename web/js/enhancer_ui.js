@@ -2,45 +2,56 @@ import { app } from "../../scripts/app.js";
 
 const NODE_CLASS = "MiniMaxH3EasyLocalPromptOptimizer";
 
-function ensureRunButton(node) {
+function createOrFindButton(node) {
     if (!node || !node.widgets) return;
-    const existing = node.widgets.find((w) => w.name === "run_prompt_opt_btn" || w.label === "▶ 单独运行/优化提示词 (Run Prompt Optimizer)");
-    if (existing) return;
+    let btn = node.widgets.find((w) => w.name === "run_prompt_opt_btn");
+    if (btn) return btn;
 
     let running = false;
-    const runBtn = node.addWidget(
+    btn = node.addWidget(
         "button",
         "▶ 单独运行/优化提示词 (Run Prompt Optimizer)",
-        "仅运行此节点生成提示词，不启动整个工作流",
+        null,
         async () => {
             if (running) return;
             running = true;
-            runBtn.name = "⏳ 正在生成优化提示词...";
+            btn.name = "⏳ 正在生成优化提示词...";
             node.setDirtyCanvas?.(true, true);
             try {
-                // Queue only this node using ComfyUI queuePrompt partial execution
                 await app.queuePrompt(0, 1, [String(node.id)]);
             } catch (err) {
                 console.error("[Easy-T8Enhancer] Run failed:", err);
             } finally {
                 running = false;
-                runBtn.name = "▶ 单独运行/优化提示词 (Run Prompt Optimizer)";
+                btn.name = "▶ 单独运行/优化提示词 (Run Prompt Optimizer)";
                 node.setDirtyCanvas?.(true, true);
             }
         },
         { serialize: false }
     );
-    runBtn.name = "run_prompt_opt_btn";
-    runBtn.label = "▶ 单独运行/优化提示词 (Run Prompt Optimizer)";
-    runBtn.serializeValue = () => undefined;
-    node.setDirtyCanvas?.(true, true);
+    btn.name = "run_prompt_opt_btn";
+    btn.serializeValue = () => undefined;
+    return btn;
 }
 
 app.registerExtension({
     name: "ComfyUI.MiniMaxH3EasyT8Enhancer",
+    async setup() {
+        // Scan already rendered nodes on canvas
+        const checkExisting = () => {
+            for (const node of app.graph?._nodes || []) {
+                if (node.type === NODE_CLASS || node.comfyClass === NODE_CLASS) {
+                    createOrFindButton(node);
+                    node.setDirtyCanvas?.(true, true);
+                }
+            }
+        };
+        setTimeout(checkExisting, 500);
+        setTimeout(checkExisting, 1500);
+    },
     async nodeCreated(node) {
-        if (node?.comfyClass === NODE_CLASS) {
-            ensureRunButton(node);
+        if (node.type === NODE_CLASS || node.comfyClass === NODE_CLASS) {
+            createOrFindButton(node);
         }
     },
     async beforeRegisterNodeDef(nodeType, nodeData) {
@@ -49,14 +60,14 @@ app.registerExtension({
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
-            ensureRunButton(this);
+            createOrFindButton(this);
             return r;
         };
 
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             const r = onConfigure ? onConfigure.apply(this, arguments) : undefined;
-            ensureRunButton(this);
+            createOrFindButton(this);
             return r;
         };
 
