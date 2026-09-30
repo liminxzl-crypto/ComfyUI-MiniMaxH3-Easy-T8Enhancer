@@ -37,7 +37,40 @@ def pil_to_base64_data_url(image: Image.Image, max_dim: int = 768) -> str:
     b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
     return f"data:image/jpeg;base64,{b64}"
 
-SYSTEM_PROMPT_OFFICIAL_SKILL_REF2VA = """You are the official MiniMax Hailuo 3 (H3) prompt director and multimodal skill engineer.
+SYSTEM_PROMPT_OFFICIAL_SKILL_REF2VA_ZH = """你是由 MiniMax 官方 Hailuo 3 (H3) 影视视频大模型认证的资深提示词导演与影视多模态工程专家。
+你的任务是深入解析用户的创意概念以及输入的参考图片（标记为 <Picture 1>、<Picture 2> 等），编写严格符合 MiniMax 官方六段式影视标准的 Ref2VA 提示词。
+
+请使用【中文】严格按照以下顺序输出完整的 6 个分段（分段标题保持英文小写并带冒号）：
+
+subject_definitions:
+<Subject 1> 是人物主体，外貌、发型、身形与服装来自 <Picture 1>：（提炼并细致描述来自 Picture 1 的视觉核心特征，如五官轮廓、发型、衣物面料材质与质感）。
+（如果有 <Picture 2>，则定义 <Subject 2> 来自 <Picture 2>，或者定义场景/道具主体）。
+
+summary:
+[参考生视频] 目标视频生动呈现 <Subject 1> 在特定场景中的动态事件与行为交互。
+
+retention_analysis:
+<Subject 1>（主体身份与外貌，贯穿所有分镜）：partially_preserved / fully_preserved - （说明保留了哪些面容发型特征，服装和动作如何根据场景情境演变适应）。
+<Picture 1>（视觉参考资产）：fully_preserved - 作为人物身份、造型与构图的核心锚点。
+
+detailed_description:
+目标视频采用写实电影级视觉质感，具有极其真实丰富的光影投射、布料微动态与自然环境粒子。
+[Shot 1] 镜头景别与运镜（如全景推进/中景平移/特写微距），构图角度，光线投射氛围，<Subject 1> 的具体动作、眼神流转、面部微表情，以及与环境衣物的细腻物理交互。
+（根据总时长展开连贯的多镜头，如 At 00:03.000 [Shot 2] 镜头切换或视线转向，人物关系的冲突或发展，连贯动态）。
+
+overall_soundscape:
+真实的空间环境声学效果，包括脚步踩踏声、衣料沙沙声、环境风声或嘈杂人声拟音细节，与画面动作严密同步。
+
+non_diegetic_music:
+观众侧背景配乐，说明乐器配置（如弦乐、钢琴或民族乐器）、节奏速率、情绪基调与高潮收束。
+
+严格要求：
+1. 必须包含全部 6 个段落，且段落标识严格为小写带冒号。
+2. 必须明确绑定 <Subject 1>、<Subject 2> 与 <Picture 1>、<Picture 2>。
+3. 直接输出提示词正文，禁止包含任何开场白、问候语或 markdown 代码块标记。
+"""
+
+SYSTEM_PROMPT_OFFICIAL_SKILL_REF2VA_EN = """You are the official MiniMax Hailuo 3 (H3) prompt director and multimodal skill engineer.
 Your task is to analyze the user's creative concept and the provided reference images (<Picture 1>, <Picture 2>, etc.), and produce a strict official MiniMax H3 Ref2VA prompt.
 
 You MUST strictly output the following 6 sections in English in this exact order:
@@ -70,31 +103,12 @@ STRICT CONSTRAINTS:
 3. Output purely the structured prompt text without conversational preamble or markdown code fences.
 """
 
-SYSTEM_PROMPT_OFFICIAL_SKILL_BASE = """You are the official MiniMax Hailuo 3 (H3) prompt director and multimodal skill engineer.
-Your task is to analyze the user's creative concept and produce an official MiniMax H3 base prompt.
-
-You MUST strictly output the following 3 sections in this exact order:
-
-integrated_multimodal_description:
-[Shot 1] (Shot type, camera movement, composition, rich lighting, colors, character action and micro-expressions, atmospheric particle effects).
-[Shot 2] (If multi-shot requested: continuous dynamic motion, transitions, dramatic lighting shifts).
-
-overall_soundscape:
-Detailed spatial sound effects, Foley actions, and environment ambiances strictly matching the visual action.
-
-non_diegetic_music:
-Thematic soundtrack instrumentals, tempo, emotion, and musical texture.
-
-Requirements:
-- Write vivid, tactile sensory details without buzzwords like 'hyperrealistic' or 'photorealistic'.
-- Output directly without conversational preamble or code blocks.
-"""
-
 def generate_optimized_prompt(
     prompt: str,
     reference_images: List[Image.Image],
     model_name: str,
     mmproj_name: str = "none",
+    language: str = "zh",
     task_type: str = "Ref2VA",
     duration_seconds: int = 5,
     shot_count: str = "AUTO",
@@ -127,7 +141,7 @@ def generate_optimized_prompt(
     if mmproj_path:
         chat_handler = Llava15ChatHandler(clip_model_path=mmproj_path)
 
-    print(f"[Easy-T8Enhancer] Loading local model: {model_name} (mmproj: {mmproj_name})...")
+    print(f"[Easy-T8Enhancer] Loading local model: {model_name} (mmproj: {mmproj_name}, lang: {language})...")
     llm = Llama(
         model_path=model_path,
         chat_handler=chat_handler,
@@ -137,11 +151,11 @@ def generate_optimized_prompt(
         verbose=False,
     )
 
-    # Select System Prompt based on Task and Output Style
-    if task_type in ["Ref2VA", "Auto"] and (reference_images or output_style == "official_skill"):
-        system_prompt = SYSTEM_PROMPT_OFFICIAL_SKILL_REF2VA
+    # Select System Prompt based on language
+    if language == "en":
+        system_prompt = SYSTEM_PROMPT_OFFICIAL_SKILL_REF2VA_EN
     else:
-        system_prompt = SYSTEM_PROMPT_OFFICIAL_SKILL_BASE
+        system_prompt = SYSTEM_PROMPT_OFFICIAL_SKILL_REF2VA_ZH
 
     user_content = []
     # Add reference images with Picture labels
@@ -151,14 +165,16 @@ def generate_optimized_prompt(
 
     pic_list_str = ", ".join([f"<Picture {i+1}>" for i in range(len(reference_images[:3]))]) if reference_images else "None"
 
+    lang_desc = "中文 (Chinese)" if language == "zh" else "English"
     instructions = (
         f"Task Type: {task_type}\n"
+        f"Output Language: {lang_desc}\n"
         f"Reference Images Attached: {pic_list_str}\n"
         f"Target Duration: {duration_seconds} seconds\n"
         f"Shot Count: {shot_count}\n"
         f"Rewrite Mode: {rewrite_mode}\n"
-        f"User Concept: {prompt.strip() or 'Cinematic narrative character scene'}\n\n"
-        "Generate the official MiniMax H3 prompt with full reference mapping (<Subject N> / <Picture N>) now:"
+        f"User Concept: {prompt.strip() or '电影级叙事人物场景'}\n\n"
+        f"请立即以 {lang_desc} 生成完整的官方 MiniMax H3 影视六段式提示词："
     )
     user_content.append({"type": "text", "text": instructions})
 

@@ -18,12 +18,14 @@ except ImportError:
 class MiniMaxH3EasyLocalPromptOptimizer:
     """
     Local Multimodal GGUF Prompt Enhancer tailored for ComfyUI-MiniMaxH3-Easy suite.
-    Enables T8-grade Qwen visual prompt rewriting with official H3 Skill format and Easy MediaBundles.
+    Enables T8-grade Qwen visual prompt rewriting with official H3 Skill format,
+    standalone execution button, and interactive editable prompt text.
     """
     CATEGORY = "MiniMax H3 Easy/Prompt"
     FUNCTION = "optimize_prompt"
     RETURN_TYPES = ("STRING", "IMAGE", "IMAGE")
     RETURN_NAMES = ("optimized_prompt", "first_frame", "reference_images")
+    OUTPUT_NODE = True
     DESCRIPTION = (
         "Enhances user prompt into official MiniMax-H3 format (<Subject N>, <Picture N>) using local GGUF Qwen vision models. "
         "Directly connects to Easy MediaLoader and automatically frees VRAM after enhancement."
@@ -40,6 +42,8 @@ class MiniMaxH3EasyLocalPromptOptimizer:
         return {
             "required": {
                 "prompt": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": True}),
+                "optimized_text": ("STRING", {"multiline": True, "default": "", "dynamicPrompts": True}),
+                "language": (["zh", "en"], {"default": "zh"}),
                 "local_model": (models, {"default": default_model}),
                 "local_mmproj": (mmprojs, {"default": default_mmproj}),
                 "task_type": (["Ref2VA", "T2VA", "I2VA", "FL2VA", "L2VA", "Auto"], {"default": "Ref2VA"}),
@@ -63,23 +67,27 @@ class MiniMaxH3EasyLocalPromptOptimizer:
     def optimize_prompt(
         self,
         prompt: str,
-        local_model: str,
-        local_mmproj: str,
-        task_type: str,
-        duration_seconds: int,
-        shot_count: str,
-        rewrite_mode: str,
-        output_style: str,
-        local_context_size: int,
-        local_max_tokens: int,
-        seed: int,
-        local_unload_policy: str,
+        optimized_text: str = "",
+        language: str = "zh",
+        local_model: str = "",
+        local_mmproj: str = "",
+        task_type: str = "Ref2VA",
+        duration_seconds: int = 5,
+        shot_count: str = "AUTO",
+        rewrite_mode: str = "balanced",
+        output_style: str = "official_skill",
+        local_context_size: int = 32768,
+        local_max_tokens: int = 4096,
+        seed: int = 0,
+        local_unload_policy: str = "unload_after_run",
         media_bundle=None,
         image=None,
         first_frame=None,
         last_frame=None,
     ):
-        # 1. Collect all reference visual materials
+        # If user has edited or confirmed an existing optimized_text, or if prompt is empty,
+        # we check whether generation is needed. If optimized_text is present, user can use it directly.
+        # But if running optimization (e.g. from run button or new prompt), we run LLM:
         pil_images = collect_all_reference_images(
             media_bundle=media_bundle,
             image=image,
@@ -87,13 +95,13 @@ class MiniMaxH3EasyLocalPromptOptimizer:
             last_frame=last_frame,
         )
 
-        # 2. Run local LLM multimodal prompt generation
         unload = (local_unload_policy == "unload_after_run")
         enhanced = generate_optimized_prompt(
             prompt=prompt,
             reference_images=pil_images,
             model_name=local_model,
             mmproj_name=local_mmproj,
+            language=language,
             task_type=task_type,
             duration_seconds=duration_seconds,
             shot_count=shot_count,
@@ -105,7 +113,6 @@ class MiniMaxH3EasyLocalPromptOptimizer:
             unload_after_run=unload,
         )
 
-        # 3. Formulate passthrough outputs safely without forcing torch.cat on mismatched image dimensions
         out_first_frame = first_frame
         if out_first_frame is None and media_bundle is not None:
             b_imgs, _, _ = extract_media_from_bundle(media_bundle)
@@ -122,7 +129,8 @@ class MiniMaxH3EasyLocalPromptOptimizer:
                 else:
                     out_ref_images = b_imgs[0]
 
-        return (enhanced, out_first_frame, out_ref_images)
+        # Return enhanced prompt, plus UI update message so the frontend box updates immediately!
+        return {"ui": {"optimized_prompt": [enhanced]}, "result": (enhanced, out_first_frame, out_ref_images)}
 
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3EasyLocalPromptOptimizer": MiniMaxH3EasyLocalPromptOptimizer,
