@@ -18,14 +18,14 @@ except ImportError:
 class MiniMaxH3EasyLocalPromptOptimizer:
     """
     Local Multimodal GGUF Prompt Enhancer tailored for ComfyUI-MiniMaxH3-Easy suite.
-    Enables T8-grade Qwen visual prompt rewriting while seamlessly ingesting Easy MediaBundles.
+    Enables T8-grade Qwen visual prompt rewriting with official H3 Skill format and Easy MediaBundles.
     """
     CATEGORY = "MiniMax H3 Easy/Prompt"
     FUNCTION = "optimize_prompt"
     RETURN_TYPES = ("STRING", "IMAGE", "IMAGE")
     RETURN_NAMES = ("optimized_prompt", "first_frame", "reference_images")
     DESCRIPTION = (
-        "Enhances user prompt into official MiniMax-H3 format using local GGUF Qwen vision models. "
+        "Enhances user prompt into official MiniMax-H3 format (<Subject N>, <Picture N>) using local GGUF Qwen vision models. "
         "Directly connects to Easy MediaLoader and automatically frees VRAM after enhancement."
     )
 
@@ -46,7 +46,7 @@ class MiniMaxH3EasyLocalPromptOptimizer:
                 "duration_seconds": ("INT", {"default": 5, "min": 1, "max": 60, "step": 1}),
                 "shot_count": (["AUTO", "1", "2", "3", "4", "5"], {"default": "AUTO"}),
                 "rewrite_mode": (["balanced", "strict", "creative"], {"default": "balanced"}),
-                "output_style": (["h3_standard", "visual_only", "dialogue_enhanced"], {"default": "h3_standard"}),
+                "output_style": (["official_skill", "h3_standard", "visual_only"], {"default": "official_skill"}),
                 "local_context_size": ("INT", {"default": 32768, "min": 2048, "max": 65536, "step": 1024}),
                 "local_max_tokens": ("INT", {"default": 4096, "min": 256, "max": 8192, "step": 256}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
@@ -116,7 +116,6 @@ class MiniMaxH3EasyLocalPromptOptimizer:
         if out_ref_images is None and media_bundle is not None:
             b_imgs, _, _ = extract_media_from_bundle(media_bundle)
             if b_imgs:
-                # If all tensors have the exact same shape [B, H, W, C], concatenate them; otherwise keep the first
                 shapes = [img.shape[1:] for img in b_imgs if isinstance(img, torch.Tensor)]
                 if len(shapes) > 1 and all(s == shapes[0] for s in shapes):
                     out_ref_images = torch.cat(b_imgs, dim=0)
