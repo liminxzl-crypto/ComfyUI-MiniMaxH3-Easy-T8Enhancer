@@ -1,0 +1,16 @@
+[project]
+name = "comfyui-minimax-h3-easy-t8enhancer"
+version = "0.1.0"
+description = "Local GGUF multimodal prompt enhancer for ComfyUI-MiniMaxH3-Easy suite with Qwen vision support."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/nkxx188/ComfyUI-MiniMaxH3-Easy"
+
+[tool.comfy]
+PublisherId = "t8mars"
+DisplayName = "MiniMax H3 Easy Local Prompt Optimizer"
+Icon = ""
