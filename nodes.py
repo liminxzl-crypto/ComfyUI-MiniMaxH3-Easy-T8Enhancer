@@ -105,7 +105,7 @@ class MiniMaxH3EasyLocalPromptOptimizer:
             unload_after_run=unload,
         )
 
-        # 3. Formulate passthrough outputs
+        # 3. Formulate passthrough outputs safely without forcing torch.cat on mismatched image dimensions
         out_first_frame = first_frame
         if out_first_frame is None and media_bundle is not None:
             b_imgs, _, _ = extract_media_from_bundle(media_bundle)
@@ -116,7 +116,12 @@ class MiniMaxH3EasyLocalPromptOptimizer:
         if out_ref_images is None and media_bundle is not None:
             b_imgs, _, _ = extract_media_from_bundle(media_bundle)
             if b_imgs:
-                out_ref_images = torch.cat(b_imgs, dim=0) if len(b_imgs) > 1 else b_imgs[0]
+                # If all tensors have the exact same shape [B, H, W, C], concatenate them; otherwise keep the first
+                shapes = [img.shape[1:] for img in b_imgs if isinstance(img, torch.Tensor)]
+                if len(shapes) > 1 and all(s == shapes[0] for s in shapes):
+                    out_ref_images = torch.cat(b_imgs, dim=0)
+                else:
+                    out_ref_images = b_imgs[0]
 
         return (enhanced, out_first_frame, out_ref_images)
 
