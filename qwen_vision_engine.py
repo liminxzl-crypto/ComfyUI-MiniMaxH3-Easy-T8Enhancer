@@ -6,23 +6,44 @@ from typing import List, Optional
 import torch
 from PIL import Image
 
-def get_llm_model_list() -> List[str]:
+def _llm_directories():
     import folder_paths
-    llm_dir = os.path.join(folder_paths.models_dir, "LLM")
-    if not os.path.isdir(llm_dir):
-        return ["none"]
-    files = [f for f in os.listdir(llm_dir) if f.endswith(".gguf") and not f.startswith(".")]
-    models = [f for f in files if "mmproj" not in f.lower()]
-    return sorted(models) if models else ["none"]
+    dirs = [os.path.join(folder_paths.models_dir, "LLM")]
+    registered = folder_paths.folder_names_and_paths.get("LLM")
+    if registered:
+        dirs.extend(registered[0])
+    seen = set()
+    result = []
+    for path in dirs:
+        path = os.path.abspath(path)
+        if path not in seen:
+            seen.add(path)
+            result.append(path)
+    return result
+
+
+def _scan_gguf_files(include_mmproj):
+    files = []
+    for llm_dir in _llm_directories():
+        if not os.path.isdir(llm_dir):
+            continue
+        for name in os.listdir(llm_dir):
+            if not name.endswith(".gguf") or name.startswith("."):
+                continue
+            is_mmproj = "mmproj" in name.lower()
+            if is_mmproj == include_mmproj:
+                files.append(name)
+    return sorted(set(files))
+
+
+def get_llm_model_list() -> List[str]:
+    models = _scan_gguf_files(include_mmproj=False)
+    return models if models else ["none"]
+
 
 def get_mmproj_list() -> List[str]:
-    import folder_paths
-    llm_dir = os.path.join(folder_paths.models_dir, "LLM")
-    if not os.path.isdir(llm_dir):
-        return ["none"]
-    files = [f for f in os.listdir(llm_dir) if f.endswith(".gguf") and not f.startswith(".")]
-    mmprojs = [f for f in files if "mmproj" in f.lower()]
-    return ["none"] + sorted(mmprojs)
+    mmprojs = _scan_gguf_files(include_mmproj=True)
+    return ["none"] + mmprojs
 
 def pil_to_base64_data_url(image: Image.Image, max_dim: int = 768) -> str:
     w, h = image.size
@@ -103,6 +124,14 @@ STRICT CONSTRAINTS:
 3. Output purely the structured prompt text without conversational preamble or markdown code fences.
 """
 
+def _resolve_model_path(name):
+    for llm_dir in _llm_directories():
+        path = os.path.join(llm_dir, name)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def generate_optimized_prompt(
     prompt: str,
     reference_images: List[Image.Image],
@@ -119,17 +148,13 @@ def generate_optimized_prompt(
     seed: int = 0,
     unload_after_run: bool = True,
 ) -> str:
-    import folder_paths
-    llm_dir = os.path.join(folder_paths.models_dir, "LLM")
-    model_path = os.path.join(llm_dir, model_name)
-    if not os.path.isfile(model_path):
-        raise FileNotFoundError(f"Local LLM model not found: {model_path}")
+    model_path = _resolve_model_path(model_name)
+    if model_path is None:
+        raise FileNotFoundError(f"Local LLM model not found: {model_name}")
 
     mmproj_path = None
     if mmproj_name and mmproj_name != "none":
-        p = os.path.join(llm_dir, mmproj_name)
-        if os.path.isfile(p):
-            mmproj_path = p
+        mmproj_path = _resolve_model_path(mmproj_name)
 
     try:
         from llama_cpp import Llama

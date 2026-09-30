@@ -13,6 +13,7 @@ class MiniMaxH3EasyLocalPromptOptimizer:
     FUNCTION = "optimize_prompt"
     RETURN_TYPES = ("STRING", "IMAGE", "IMAGE")
     RETURN_NAMES = ("optimized_prompt", "first_frame", "reference_images")
+    OUTPUT_NODE = True
     DESCRIPTION = "Optimize prompts into official MiniMax H3 structure with local GGUF multimodal models."
 
     @classmethod
