@@ -15,6 +15,44 @@ function isOptimizer(node) {
     return node && (node.type === NODE_ID || node.comfyClass === NODE_ID);
 }
 
+function syncDownstreamEasyNode(optimizerNode, optimizedPrompt) {
+    if (!app.graph?._nodes || !optimizerNode.outputs) return;
+    
+    // Find link ID for output 0 (optimized_prompt)
+    const outSlot = optimizerNode.outputs[0];
+    if (!outSlot || !outSlot.links || outSlot.links.length === 0) return;
+
+    for (const linkId of outSlot.links) {
+        const link = app.graph.links?.[linkId];
+        if (!link) continue;
+        const targetNode = app.graph.getNodeById(link.target_id);
+        if (!targetNode) continue;
+
+        // If downstream is MiniMaxH3Easy
+        if (targetNode.type === "MiniMaxH3Easy" || targetNode.comfyClass === "MiniMaxH3Easy") {
+            const promptWidget = targetNode.widgets?.find((w) => w.name === "prompt");
+            if (promptWidget) {
+                promptWidget.value = optimizedPrompt;
+                if (promptWidget._state) promptWidget._state.value = optimizedPrompt;
+            }
+
+            // Sync with Easy's custom rich editor if present
+            if (targetNode.__h3Editor) {
+                targetNode.__h3Editor.innerText = optimizedPrompt;
+            }
+            if (targetNode.properties) {
+                targetNode.properties.minimax_h3_prompt_reference_doc = {
+                    version: 1,
+                    text: optimizedPrompt,
+                    parts: [{ type: "text", text: optimizedPrompt }]
+                };
+            }
+
+            targetNode.setDirtyCanvas?.(true, true);
+        }
+    }
+}
+
 function addRunButton(node) {
     if (!isOptimizer(node) || !node.widgets) return;
     if (node.widgets.some((w) => w.type === "button" && w.name === BUTTON_NAME)) return;
@@ -58,8 +96,6 @@ app.registerExtension({
     name: "ComfyUI.MiniMaxH3EasyT8Enhancer",
 
     async setup() {
-        // Deferred only: standard widgets are built by the framework after node
-        // creation, so append the button later to avoid shifting widget order.
         setTimeout(scan, 300);
         setTimeout(scan, 1000);
         setTimeout(scan, 2500);
@@ -67,7 +103,6 @@ app.registerExtension({
 
     async nodeCreated(node) {
         if (!isOptimizer(node)) return;
-        // Do NOT add synchronously; wait for framework-generated widgets.
         setTimeout(() => addRunButton(node), 300);
         setTimeout(() => addRunButton(node), 1000);
     },
@@ -93,6 +128,10 @@ app.registerExtension({
                 optimizedTextWidget.value = optimizedPrompt;
                 fitNode(this);
                 this.setDirtyCanvas?.(true, true);
+
+                // Auto-sync into downstream Easy node's prompt widget/editor
+                syncDownstreamEasyNode(this, optimizedPrompt);
+                app.graph?.setDirtyCanvas?.(true, true);
             }
         };
     },

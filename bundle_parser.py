@@ -55,19 +55,12 @@ def collect_all_reference_images(
 ) -> List[Image.Image]:
     """
     Collects and normalizes all visual inputs into PIL Images for visual LLM processing.
+    素材箱（media_bundle）的图片优先排列在最前面，确保 <Picture 1>, <Picture 2>...
+    与素材箱里的 @图片1, @图片2... 一一对应。
     """
     pil_images = []
 
-    # 1. From direct image input
-    if image is not None and isinstance(image, torch.Tensor):
-        for i in range(image.shape[0]):
-            pil_images.append(tensor_to_pil(image[i]))
-
-    # 2. From first_frame
-    if first_frame is not None and isinstance(first_frame, torch.Tensor):
-        pil_images.append(tensor_to_pil(first_frame))
-
-    # 3. From media_bundle
+    # 1. 素材箱图片优先（保证 <Picture N> 与 @图片N 对应）
     if media_bundle is not None:
         b_images, _, b_videos = extract_media_from_bundle(media_bundle)
         for img_tensor in b_images:
@@ -79,10 +72,18 @@ def collect_all_reference_images(
             if isinstance(vid, dict) and "images" in vid:
                 v_frames = vid["images"]
                 if isinstance(v_frames, torch.Tensor) and v_frames.shape[0] > 0:
-                    # Pick 1 representative keyframe from video
                     pil_images.append(tensor_to_pil(v_frames[0]))
 
-    # 4. From last_frame
+    # 2. 直接连接的 image 输入（补充到素材箱图片之后）
+    if image is not None and isinstance(image, torch.Tensor):
+        for i in range(image.shape[0]):
+            pil_images.append(tensor_to_pil(image[i]))
+
+    # 3. first_frame
+    if first_frame is not None and isinstance(first_frame, torch.Tensor):
+        pil_images.append(tensor_to_pil(first_frame))
+
+    # 4. last_frame
     if last_frame is not None and isinstance(last_frame, torch.Tensor):
         pil_images.append(tensor_to_pil(last_frame))
 

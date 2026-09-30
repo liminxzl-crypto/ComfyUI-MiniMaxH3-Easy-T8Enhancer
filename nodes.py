@@ -19,7 +19,16 @@ class MiniMaxH3EasyLocalPromptOptimizer:
     @classmethod
     def INPUT_TYPES(cls):
         models = get_llm_model_list()
-        default_model = "Qwen3.8-9B-heretic-uncensored.i1-Q6_K.gguf" if "Qwen3.8-9B-heretic-uncensored.i1-Q6_K.gguf" in models else models[0]
+        # 优先选 Q4_K_M（5.24GB，8G显存可完整上GPU），其次 Q6_K（6.85GB，需要更多显存）
+        preferred_models = [
+            "Qwen-Image-2.1-PE-I2I.Q4_K_M.gguf",
+            "Qwen3.8-9B-heretic-uncensored.i1-Q6_K.gguf",
+        ]
+        default_model = models[0]
+        for name in preferred_models:
+            if name in models:
+                default_model = name
+                break
 
         mmprojs = get_mmproj_list()
         default_mmproj = "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf" if "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf" in mmprojs else (mmprojs[1] if len(mmprojs) > 1 else mmprojs[0])
