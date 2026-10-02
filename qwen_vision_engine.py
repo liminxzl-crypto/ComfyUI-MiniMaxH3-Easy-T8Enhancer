@@ -60,13 +60,15 @@ def pil_to_base64_data_url(image: Image.Image, max_dim: int = 768) -> str:
 
 
 def _build_system_prompt_zh(num_pictures: int) -> str:
-    """构建中文系统提示词，根据实际素材数量动态生成 Subject/Picture 绑定要求。"""
+    """构建中文系统提示词：以初始文本的语义环境和叙事基调为最高准则进行最标准的六段式影视级扩写。
+    先不做任何主观风格/剧情限定，完全顺应并深化初始文本的意图；除非初始文本有明确要求，才进行对应定制。
+    """
     subject_defs = []
     retention_items = []
     for i in range(1, num_pictures + 1):
         subject_defs.append(
             f"<Subject {i}> 的外貌、发型、身形与服装来自 <Picture {i}>（@图片{i}）："
-            f"（提炼并细致描述来自 <Picture {i}> 的视觉核心特征，如五官轮廓、发型、衣物面料材质与质感）。"
+            f"（提炼并细致描述来自 <Picture {i}> 的核心视觉特征，如五官轮廓、发型发色、衣着服饰面料与质感）。"
         )
         retention_items.append(
             f"<Subject {i}>（主体身份与外貌，贯穿所有分镜）：fully_preserved - "
@@ -75,7 +77,7 @@ def _build_system_prompt_zh(num_pictures: int) -> str:
         )
 
     subject_block = "\n".join(subject_defs) if subject_defs else (
-        "<Subject 1> 是场景主体：（根据用户描述生成外貌特征）。"
+        "<Subject 1> 是场景核心主体：（严格依据用户初始文本描述提炼并细化其外貌与服饰特征）。"
     )
     retention_block = "\n".join(retention_items) if retention_items else (
         "<Subject 1>（主体身份与外貌）：fully_preserved。"
@@ -85,43 +87,47 @@ def _build_system_prompt_zh(num_pictures: int) -> str:
     if num_pictures > 0:
         tags = ", ".join(f"<Subject {i}>↔<Picture {i}>" for i in range(1, num_pictures + 1))
         binding_rule = (
-            f"\n关键绑定规则：素材箱已连接 {num_pictures} 张参考图。"
-            f"你必须在 subject_definitions 中严格建立以下绑定：{tags}。"
-            f"在 detailed_description 的每个 [Shot] 中，凡是该主体出场就必须使用 <Subject N> 标签引用。"
+            f"\n【素材资产绑定规则】：素材箱已连接 {num_pictures} 张参考图。"
+            f"你必须在 subject_definitions 中严格建立绑定：{tags}。"
+            f"在 detailed_description 中，凡是该主体出场必须使用 <Subject N> 标签精准引用。"
         )
 
-    return f"""你是由 MiniMax 官方 Hailuo 3 (H3) 影视视频大模型认证的资深提示词导演。
-你的任务是解析用户的创意概念和参考图片，编写严格符合 MiniMax 官方六段式标准的 Ref2VA 提示词。
+    return f"""你是由 MiniMax 官方 Hailuo 3 (H3) 认证的顶级影视提示词导演与剧本专家。
+你的任务是：深度理解用户初始文本的【语义环境、情绪基调、叙事逻辑与场景氛围】，并结合提供的参考图片，进行最专业、最标准、最契合原意的 MiniMax H3 影视六段式提示词扩写。
+
+【核心原则 - 语义忠实与无偏见扩展】：
+1. **顺应原意，不做强加限定**：先不做预设的画风或桥段限定，一切扩写必须完全建立在用户初始文本所营造的语义环境与世界观之下。除非初始文本明确提出了特定风格、对白、镜头或道具要求，否则不随意添加违背原意的冲突元素。
+2. **如果初始文本包含对话/台词**：必须使用 `<d>台词内容</d>` 标签精准包裹，并细致刻画说话时的微表情、口型开合与情感起伏。如果初始文本没有对话需求，则专注于肢体语言、眼神交流与环境叙事。
+3. **分镜与时序连贯**：根据目标时长自然分段（如 [Shot 1]、[Shot 2]...），镜头机位、运镜方式、光影投射、物理交互与动作节奏必须具备电影工业级的画面表现力与连续性。
 {binding_rule}
 
-请使用【中文】严格按照以下顺序输出完整的 6 个分段（分段标题保持英文小写并带冒号）：
+请使用【中文】严格按照以下标准六段式输出（分段标题保持英文小写带英文冒号）：
 
 subject_definitions:
 {subject_block}
 
 summary:
-[参考生视频] 目标视频生动呈现 <Subject 1> 在特定场景中的动态事件与行为交互。
+[视频整体概述] 依据初始文本核心事件，概括提炼视频的整体叙事、主体行为与核心情境。
 
 retention_analysis:
 {retention_block}
 
 detailed_description:
-目标视频采用写实电影级视觉质感，具有极其真实丰富的光影投射、布料微动态与自然环境粒子。
-[Shot 1] 镜头景别与运镜，构图角度，光线氛围，<Subject 1> 的具体动作、眼神、面部微表情，以及与环境的物理交互。
-（根据总时长展开连贯的多镜头，如 At 00:03.000 [Shot 2]）。
+根据初始文本的语义环境展开写实电影级视觉描述，包含自然的光影投射、材质物理动态与环境细节。
+[Shot 1] 镜头景别与运镜轨迹，构图角度，光线与环境氛围，<Subject 1> 的具体行为动作、眼神流转、面部微表情，以及与环境或其他主体的真实物理互动。
+（按时序展开多镜头，如 At 00:03.000 [Shot 2]，每个分镜均需保持连贯的叙事与视觉一致性）。
 
 overall_soundscape:
-真实的空间环境声学效果，包括脚步声、衣料沙沙声、环境声拟音细节，与画面动作同步。
+与画面动作及场景环境高度吻合的空间声学效果（包括环境底噪、拟音细节、动作音效、脚步声等）。
 
 non_diegetic_music:
-观众侧背景配乐，说明乐器配置、节奏速率、情绪基调与高潮收束。
+与初始文本情绪基调完美匹配的背景配乐说明（配乐风格、乐器编排、节奏起伏与情感烘托）。
 
-严格要求：
-1. 必须包含全部 6 个段落，且段落标识严格为小写带冒号。
-2. 必须在 subject_definitions 中明确写出每个 <Subject N> 来自 <Picture N> 的绑定。
-3. 在 detailed_description 中引用主体时必须使用 <Subject N> 标签。
-4. 直接输出纯文本提示词正文，禁止使用 JSON、markdown 代码块或任何结构化数据格式。
-5. 禁止包含任何开场白、问候语、解释说明或结尾总结。
+【严格执行要求】：
+1. 必须包含全部 6 个段落，段落标题必须为小写字母且带冒号。
+2. 初始文本中的人物台词必须使用 `<d>对话内容</d>` 进行标记。
+3. 有参考图片时，必须在 subject_definitions 中声明 `<Subject N> 来自 <Picture N>`，并在分镜中规范引用。
+4. 直接输出纯文本提示词正文，严禁使用 markdown 代码块（```）、JSON 格式包裹，严禁任何客套问候或前后解释说明。
 """
 
 
@@ -351,10 +357,11 @@ def generate_optimized_prompt(
         f"Output Language: {lang_desc}\n"
         f"Target Duration: {duration_seconds} seconds\n"
         f"Shot Count: {shot_count}\n"
-        f"Rewrite Mode: {rewrite_mode}\n"
-        f"User Concept: {prompt.strip() or '电影级叙事人物场景'}\n\n"
-        f"请立即以 {lang_desc} 生成完整的官方 MiniMax H3 影视六段式提示词，"
-        f"必须在 subject_definitions 中写出 <Subject N> 来自 <Picture N> 的绑定："
+        f"Rewrite Mode: {rewrite_mode}\n\n"
+        f"【用户初始输入文本】：\n\"\"\"\n{prompt.strip() or '电影级叙事人物场景'}\n\"\"\"\n\n"
+        f"【导演扩写指令】：\n"
+        f"请深度理解上述初始文本的语义情境与核心意图，完全顺应其叙事与情绪氛围进行最标准的影视级六段式扩写（除非初始文本有特别要求，否则先不做预设限制）。"
+        f"若涉及台词请规范使用 <d>...</d> 标记，必须在 subject_definitions 中声明并绑定素材资产："
     )
     user_content.append({"type": "text", "text": instructions})
 
