@@ -255,9 +255,10 @@ def _official_language_rule(language: str, visual_only: bool) -> str:
     lines = []
     if language == "zh":
         lines.append(
-            "- LANGUAGE: localize descriptive prose to Chinese. Field names, section headers, section order, "
-            "reference labels (`<Subject N>`, `<Picture N>`, `<Video N>`, `<Audio N>`), the `[Shot N]` / "
-            "`At S.SS` timing notation, and all sound rules must stay exactly as the Skill defines them."
+            "- LANGUAGE - HIGHEST PRIORITY, this overrides the language of the Skill text quoted above: the "
+            "Skill and its reference guide are written in English only because that is the language of the "
+            "document, NOT because your answer must be English. Write every descriptive sentence in "
+            "简体中文 (Chinese)."
         )
     else:
         lines.append(
@@ -274,6 +275,24 @@ def _official_language_rule(language: str, visual_only: bool) -> str:
             "`detailed_description`; describe only what is visible."
         )
     return "\n".join(lines)
+
+
+def _official_language_lock(language: str) -> str:
+    """Restate the output language right before generation.
+
+    The bundled official Skill is English-only source material; without a
+    closing restatement the model mirrors the document language and ignores the
+    requested output language. Recency wins, so this goes last.
+    """
+    if language != "zh":
+        return ("REMINDER: the whole answer is in English, following the Skill.\n\n")
+    return (
+        "REMINDER - the answer must be written in 简体中文. The Skill text above is English source "
+        "material; that is not the language of your answer. Keep ONLY these tokens in English: the section "
+        "headers, the `<Subject N>`, `<Picture N>`, `<Video N>`, `<Audio N>` labels, the `[Shot N]` and "
+        "`At S.SS` timing notation, the `<d>...</d>` wrapper, and the mandatory first-line alignment "
+        "sentence. Every descriptive sentence must be Chinese. Do not answer in English.\n\n"
+    )
 
 
 def _build_official_skill_prompt(
@@ -326,7 +345,7 @@ def _build_official_skill_prompt(
 - Reference images attached: {num_pictures}
 {rule_block}
 
-Produce the final H3 prompt now."""
+{_official_language_lock(language)}Produce the final H3 prompt now."""
 
 
 def build_system_prompt(
