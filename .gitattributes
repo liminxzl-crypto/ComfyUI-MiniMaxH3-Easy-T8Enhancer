@@ -1,0 +1,16 @@
+# Keep the bundled MiniMax official Skill snapshot byte-stable across platforms.
+# `official_skill.py` hashes those files after CRLF->LF normalization, so pinning
+# them to LF keeps a fresh clone identical to the recorded manifest hashes.
+official_skills/** text eol=lf
+
+# Normalize source and docs to LF for consistent diffs.
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.js   text eol=lf
+*.txt  text eol=lf
+.gitignore     text eol=lf
+.gitattributes text eol=lf

@@ -3,4 +3,20 @@ __pycache__/
 *$py.class
 .ipynb_checkpoints/
 .DS_Store
+Thumbs.db
 *.tmp
+
+# Editor / OS noise
+.vscode/
+.idea/
+
+# Local backup folders created while editing this node
+_backup_*/
+_*_backup/
+
+# Never commit model weights
+*.gguf
+*.safetensors
+*.ckpt
+*.pt
+*.pth

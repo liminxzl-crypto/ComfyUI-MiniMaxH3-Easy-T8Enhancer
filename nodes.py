@@ -3,9 +3,28 @@ import torch
 try:
     from .bundle_parser import collect_all_reference_images, extract_media_from_bundle
     from .qwen_vision_engine import get_llm_model_list, get_mmproj_list, generate_optimized_prompt
+    from . import official_skill
 except ImportError:
     from bundle_parser import collect_all_reference_images, extract_media_from_bundle
     from qwen_vision_engine import get_llm_model_list, get_mmproj_list, generate_optimized_prompt
+    import official_skill
+
+
+_OUTPUT_STYLE_TOOLTIP = (
+    "official_skill（默认）：逐字注入内置的 MiniMax 官方 H3 提示词 Skill 快照，"
+    "按 task_type 自动选用 references/ref-en.txt（六段式）或 references/base-en.txt（三段式）。"
+    "h3_standard：使用节点自带的六段式提示词，不加载官方 Skill（与旧版本行为一致）。"
+    "visual_only：同样基于官方 Skill，但去掉 overall_soundscape 与 non_diegetic_music 两段，只留画面描述。"
+)
+
+_TASK_TYPE_TOOLTIP = (
+    "决定使用官方 Skill 的哪份参考指南与段落结构。"
+    "Ref2VA：全参考改写，六段式（subject_definitions/summary/retention_analysis/"
+    "detailed_description/overall_soundscape/non_diegetic_music）。"
+    "T2VA/I2VA/FL2VA/L2VA：三段式（integrated_multimodal_description + 两个音频段），"
+    "其中 I2VA/FL2VA/L2VA 会强制首行输出首/尾帧对齐指令。"
+    "Auto：连接了参考图则自动按 Ref2VA，否则按 T2VA。"
+)
 
 
 class MiniMaxH3EasyLocalPromptOptimizer:
@@ -14,7 +33,10 @@ class MiniMaxH3EasyLocalPromptOptimizer:
     RETURN_TYPES = ("STRING", "IMAGE", "IMAGE")
     RETURN_NAMES = ("optimized_prompt", "first_frame", "reference_images")
     OUTPUT_NODE = True
-    DESCRIPTION = "Optimize prompts into official MiniMax H3 structure with local GGUF multimodal models."
+    DESCRIPTION = (
+        "Optimize prompts into the official MiniMax H3 structure with local GGUF multimodal models. "
+        "output_style='official_skill' injects the bundled verbatim MiniMax H3 prompt-writing Skill."
+    )
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -40,11 +62,14 @@ class MiniMaxH3EasyLocalPromptOptimizer:
                 "language": (["zh", "en"], {"default": "zh"}),
                 "local_model": (models, {"default": default_model}),
                 "local_mmproj": (mmprojs, {"default": default_mmproj}),
-                "task_type": (["Ref2VA", "T2VA", "I2VA", "FL2VA", "L2VA", "Auto"], {"default": "Ref2VA"}),
+                "task_type": (list(official_skill.TASK_TYPES), {"default": "Ref2VA", "tooltip": _TASK_TYPE_TOOLTIP}),
                 "duration_seconds": ("INT", {"default": 5, "min": 1, "max": 60, "step": 1}),
                 "shot_count": (["AUTO", "1", "2", "3", "4", "5"], {"default": "AUTO"}),
                 "rewrite_mode": (["balanced", "strict", "creative"], {"default": "balanced"}),
-                "output_style": (["official_skill", "h3_standard", "visual_only"], {"default": "official_skill"}),
+                "output_style": (
+                    list(official_skill.OUTPUT_STYLES),
+                    {"default": official_skill.DEFAULT_OUTPUT_STYLE, "tooltip": _OUTPUT_STYLE_TOOLTIP},
+                ),
                 "local_context_size": ("INT", {"default": 32768, "min": 2048, "max": 65536, "step": 1024}),
                 "local_max_tokens": ("INT", {"default": 4096, "min": 256, "max": 8192, "step": 256}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),

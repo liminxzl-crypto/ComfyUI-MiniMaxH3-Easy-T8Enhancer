@@ -6,6 +6,11 @@ from typing import List, Optional
 import torch
 from PIL import Image
 
+try:
+    from . import official_skill
+except ImportError:  # loaded as a top-level module (tests, direct scripts)
+    import official_skill
+
 def _llm_directories():
     import folder_paths
     dirs = [os.path.join(folder_paths.models_dir, "LLM")]
@@ -197,6 +202,172 @@ STRICT CONSTRAINTS:
 """
 
 
+# ---------------------------------------------------------------------------
+# Official MiniMax H3 prompt-writing Skill backed prompts
+# ---------------------------------------------------------------------------
+# output_style="official_skill" -> inject the verbatim bundled official Skill.
+# output_style="visual_only"    -> same guide, minus the two audio sections.
+# output_style="h3_standard"    -> the built-in prompts defined above.
+
+_ALIGNMENT_SENTENCES = {
+    "I2VA": (
+        "For the target video, at 0.00 seconds into the target video, "
+        "<Picture 1> (from [Shot 1]) is fully referenced."
+    ),
+}
+
+
+def _official_alignment_rule(task_type: str) -> str:
+    """Restate the mandatory first-line keyframe instruction for base modes."""
+    mode = official_skill.normalize_task_type(task_type)
+    if mode == "T2VA" or mode == official_skill.REFERENCE_MODE:
+        return ""
+    literal = _ALIGNMENT_SENTENCES.get(mode)
+    if literal:
+        first_line = f'`{literal}`'
+        detail = "Use this wording verbatim, substituting nothing."
+    else:
+        first_line = "the picture-alignment instruction given in `references/base-en.txt` section 2.1"
+        detail = (
+            "Use the wording in `references/base-en.txt` section 2.1 verbatim, substituting `N` with the "
+            "index of the actual final shot and `S.SS` with the effective duration formatted to exactly "
+            "two decimal places."
+        )
+    return (
+        f"- MANDATORY FIRST LINE: because the resolved mode is `{mode}`, the final prompt must open with "
+        f"{first_line} as its very first line, followed by one blank line before the core fields. {detail}"
+    )
+
+
+def _official_binding_rule(task_type: str, num_pictures: int) -> str:
+    if not official_skill.is_reference_mode(task_type) or num_pictures <= 0:
+        return ""
+    tags = ", ".join(f"<Subject {i}>↔<Picture {i}>" for i in range(1, num_pictures + 1))
+    return (
+        f"- REFERENCE BINDING: {num_pictures} reference image(s) are attached. Establish these bindings "
+        f"on their own lines inside `subject_definitions`: {tags}. Cite `<Subject N>` in "
+        f"`detailed_description` every time that subject appears, and never reuse a label for a different "
+        f"piece of content."
+    )
+
+
+def _official_language_rule(language: str, visual_only: bool) -> str:
+    lines = []
+    if language == "zh":
+        lines.append(
+            "- LANGUAGE: localize descriptive prose to Chinese. Field names, section headers, section order, "
+            "reference labels (`<Subject N>`, `<Picture N>`, `<Video N>`, `<Audio N>`), the `[Shot N]` / "
+            "`At S.SS` timing notation, and all sound rules must stay exactly as the Skill defines them."
+        )
+    else:
+        lines.append(
+            "- LANGUAGE: write every section in English, exactly as the Skill requires."
+        )
+    lines.append(
+        "- Preserve dialogue, lyrics, and text visibly present in the scene in their original language, "
+        "wrapping spoken lines in `<d>...</d>`."
+    )
+    if visual_only:
+        lines.append(
+            "- VISUAL ONLY MODE: omit the `overall_soundscape` and `non_diegetic_music` sections entirely. "
+            "Everything else in the Skill still applies — in particular, do not move sound content into "
+            "`detailed_description`; describe only what is visible."
+        )
+    return "\n".join(lines)
+
+
+def _build_official_skill_prompt(
+    *,
+    task_type: str,
+    language: str,
+    num_pictures: int,
+    duration_seconds: int,
+    shot_count: str,
+    rewrite_mode: str,
+    visual_only: bool,
+) -> str:
+    mode = official_skill.normalize_task_type(task_type)
+    skill_md, guide_name, guide_text = official_skill.load_skill_bundle(mode)
+
+    sections = list(
+        official_skill.sections_for_style(mode, "visual_only" if visual_only else "official_skill")
+    )
+    section_list = ", ".join(f"`{name}`" for name in sections)
+
+    rules = [
+        _official_alignment_rule(mode),
+        _official_binding_rule(mode, num_pictures),
+        _official_language_rule(language, visual_only),
+        f"- SECTION ORDER: emit exactly these {len(sections)} section(s), in this order: {section_list}. "
+        f"Each header is lowercase and followed by a colon.",
+        f"- TIMING: the described audiovisual timeline must fill the requested {duration_seconds} seconds "
+        f"without over- or under-running it.",
+        "- OUTPUT: plain text only. No JSON, no markdown code fences, no preamble, no trailing commentary.",
+    ]
+    rule_block = "\n".join(line for line in rules if line)
+
+    return f"""You are a MiniMax H3 prompt writer. The official MiniMax H3 prompt-writing Skill is reproduced below VERBATIM and is the sole authority for this task: obey its structure, field names, section order, label rules, timing notation, and sound rules exactly.
+
+{official_skill.provenance_banner()}
+
+--- BEGIN OFFICIAL SKILL.md ---
+{skill_md}
+--- END OFFICIAL SKILL.md ---
+
+--- BEGIN OFFICIAL references/{guide_name} ---
+{guide_text}
+--- END OFFICIAL references/{guide_name} ---
+
+=== THIS REQUEST ===
+- Resolved mode: `{mode}` (guide: `references/{guide_name}`)
+- Target duration: {duration_seconds} seconds
+- Shot count: {shot_count}
+- Rewrite mode: {rewrite_mode}
+- Reference images attached: {num_pictures}
+{rule_block}
+
+Produce the final H3 prompt now."""
+
+
+def build_system_prompt(
+    *,
+    output_style: str,
+    language: str,
+    task_type: str,
+    num_pictures: int,
+    duration_seconds: int = 5,
+    shot_count: str = "AUTO",
+    rewrite_mode: str = "balanced",
+) -> str:
+    """Select the system prompt for the requested output style."""
+    style = official_skill.normalize_output_style(output_style)
+    if style == "h3_standard":
+        return _build_system_prompt_en(num_pictures) if language == "en" else _build_system_prompt_zh(num_pictures)
+    return _build_official_skill_prompt(
+        task_type=task_type,
+        language=language,
+        num_pictures=num_pictures,
+        duration_seconds=duration_seconds,
+        shot_count=shot_count,
+        rewrite_mode=rewrite_mode,
+        visual_only=(style == "visual_only"),
+    )
+
+
+def _director_instruction(output_style: str) -> str:
+    """Closing instruction appended to the user message."""
+    if official_skill.normalize_output_style(output_style) == "h3_standard":
+        return (
+            "请深度理解上述初始文本的语义情境与核心意图，完全顺应其叙事与情绪氛围进行最标准的影视级六段式扩写（除非初始文本有特别要求，否则先不做预设限制）。"
+            "若涉及台词请规范使用 <d>...</d> 标记，必须在 subject_definitions 中声明并绑定素材资产："
+        )
+    return (
+        "Rewrite the initial text into a MiniMax H3 prompt that follows the official Skill above exactly. "
+        "Keep the requested duration, the resolved mode's section structure, and every reference label "
+        "consistent. Wrap spoken lines in <d>...</d> and bind every referenced asset:"
+    )
+
+
 def _select_chat_handler(mmproj_path: str):
     """选择适配 Qwen3.5 架构的 chat handler，自动回退。"""
     from llama_cpp import llama_chat_format
@@ -240,8 +411,8 @@ def _select_chat_handler(mmproj_path: str):
     )
 
 
-def _clean_output(text: str) -> str:
-    """清理 LLM 输出：移除 markdown 代码块、尝试将 JSON 转为纯文本六段式格式。"""
+def _clean_output(text: str, section_keys=None) -> str:
+    """清理 LLM 输出：移除 markdown 代码块、尝试将 JSON 转为纯文本分段格式。"""
     import re
     import json as _json
 
@@ -252,16 +423,21 @@ def _clean_output(text: str) -> str:
     text = re.sub(r'\n?```\s*$', '', text)
     text = text.strip()
 
-    # 如果输出是 JSON 格式，尝试转为纯文本六段式
+    # 如果输出是 JSON 格式，尝试转为纯文本分段格式（按模式决定段落清单）
     if text.startswith('{'):
         try:
             obj = _json.loads(text)
+            keys = list(section_keys or ())
+            if not keys:
+                # 未知模式时按命中段落数最多的候选集推断：
+                # 三段式与六段式都含两个音频段，只能靠整体命中数区分。
+                best_score = 0
+                for candidate in (official_skill.REFERENCE_SECTIONS, official_skill.BASE_SECTIONS):
+                    score = sum(1 for candidate_key in candidate if candidate_key in obj)
+                    if score > best_score:
+                        best_score, keys = score, list(candidate)
             sections = []
-            section_keys = [
-                "subject_definitions", "summary", "retention_analysis",
-                "detailed_description", "overall_soundscape", "non_diegetic_music",
-            ]
-            for key in section_keys:
+            for key in keys:
                 val = obj.get(key, "")
                 if val:
                     sections.append(f"{key}:\n{val}")
@@ -329,10 +505,30 @@ def generate_optimized_prompt(
 
     # 根据实际素材数量动态构建系统提示词
     num_pictures = min(len(reference_images), 3)
-    if language == "en":
-        system_prompt = _build_system_prompt_en(num_pictures)
-    else:
-        system_prompt = _build_system_prompt_zh(num_pictures)
+    resolved_task_type = official_skill.resolve_task_type(
+        task_type, has_reference_images=bool(reference_images)
+    )
+    resolved_style = official_skill.normalize_output_style(output_style)
+    system_prompt = build_system_prompt(
+        output_style=resolved_style,
+        language=language,
+        task_type=resolved_task_type,
+        num_pictures=num_pictures,
+        duration_seconds=duration_seconds,
+        shot_count=shot_count,
+        rewrite_mode=rewrite_mode,
+    )
+    print(
+        f"[Easy-T8Enhancer] output_style={resolved_style} "
+        f"task_type={task_type}->{resolved_task_type} "
+        f"guide={official_skill.guide_filename_for(resolved_task_type)}"
+        + (" (official Skill injected)" if resolved_style != "h3_standard" else " (built-in prompt)")
+    )
+    expected_sections = (
+        None
+        if resolved_style == "h3_standard"
+        else official_skill.sections_for_style(resolved_task_type, resolved_style)
+    )
 
     # 构建用户消息：每张图单独一个 image_url 条目
     user_content = []
@@ -353,15 +549,14 @@ def generate_optimized_prompt(
     lang_desc = "中文 (Chinese)" if language == "zh" else "English"
     instructions = (
         f"{material_info}"
-        f"Task Type: {task_type}\n"
+        f"Task Type: {resolved_task_type}\n"
         f"Output Language: {lang_desc}\n"
         f"Target Duration: {duration_seconds} seconds\n"
         f"Shot Count: {shot_count}\n"
         f"Rewrite Mode: {rewrite_mode}\n\n"
         f"【用户初始输入文本】：\n\"\"\"\n{prompt.strip() or '电影级叙事人物场景'}\n\"\"\"\n\n"
         f"【导演扩写指令】：\n"
-        f"请深度理解上述初始文本的语义情境与核心意图，完全顺应其叙事与情绪氛围进行最标准的影视级六段式扩写（除非初始文本有特别要求，否则先不做预设限制）。"
-        f"若涉及台词请规范使用 <d>...</d> 标记，必须在 subject_definitions 中声明并绑定素材资产："
+        f"{_director_instruction(resolved_style)}"
     )
     user_content.append({"type": "text", "text": instructions})
 
@@ -394,7 +589,7 @@ def generate_optimized_prompt(
         result_text = "".join(collected).strip()
         if "<think>" in result_text and "</think>" in result_text:
             result_text = result_text.split("</think>")[-1].strip()
-        result_text = _clean_output(result_text)
+        result_text = _clean_output(result_text, expected_sections)
     finally:
         if unload_after_run:
             print("[Easy-T8Enhancer] Unloading LLM and purging VRAM cache for downstream H3 diffusion...")

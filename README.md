@@ -14,14 +14,21 @@ A high-performance local multimodal prompt optimization node designed for [Comfy
   - 输入端原生支持连接 `MiniMaxH3EasyMediaLoader` 的 `media_bundle` 输出。
   - 自动提取素材箱内的多张参考图片与视频关键帧，并建立 `<Picture N>` 与素材箱 `@图片N` 的严格映射。
 
-- **官方六段式影视标准提示词 (Official 6-Section MiniMax Prompt Format)**:
-  - 深度定制影视级系统提示词，严格按照 MiniMax 官方六段式规范输出：
-    1. `subject_definitions:`（精准建立 `<Subject 1> ↔ <Picture 1>` 的主体与服装特征绑定）
-    2. `summary:`（事件整体摘要）
-    3. `retention_analysis:`（主体身份与参考图一致性保持分析）
-    4. `detailed_description:`（按 `[Shot 1]`、`[Shot 2]` 时间轴展开镜头机位、运镜与微表情动作）
-    5. `overall_soundscape:`（环境声学音效与拟音细节）
-    6. `non_diegetic_music:`（情绪配乐与乐器配置）
+- **内置 MiniMax 官方 H3 提示词 Skill (Bundled Official H3 Prompt-Writing Skill)**:
+  - `output_style=official_skill`（默认）会把 **[MiniMax-AI/MiniMax-H3](https://github.com/MiniMax-AI/MiniMax-H3)** 官方 `h3-prompt-writing` Skill 的**逐字快照**注入系统提示词，并以官方规范作为唯一权威。
+  - 快照固定在上游 commit `d21241f0a4b3acbb34c97dae47fa417b7065e438`，逐文件 SHA-256 与归一化树哈希记录在 `official_skills/H3_SOURCE.json`，**每次加载都会重新校验**，不一致就直接报错而不是静默降级。
+  - 官方素材版权归 MiniMax-AI，未按本项目许可再授权，详见 `THIRD_PARTY_NOTICES.md`。
+
+- **按任务类型自动切换官方结构 (Task-Type Aware Structure)**:
+  - `Ref2VA`（全参考改写）→ 官方六段式：`subject_definitions:` / `summary:` / `retention_analysis:` / `detailed_description:` / `overall_soundscape:` / `non_diegetic_music:`
+  - `T2VA` / `I2VA` / `FL2VA` / `L2VA` → 官方三段式：`integrated_multimodal_description:` / `overall_soundscape:` / `non_diegetic_music:`
+  - `I2VA` / `FL2VA` / `L2VA` 会**强制把首/尾帧对齐指令作为提示词第一行**，并按官方记号（`[Shot N]`、`At S.SS`）书写时序。
+  - `Auto` → 接了参考图按 `Ref2VA`，否则按 `T2VA`。
+
+- **三种输出风格 (Three Output Styles)**:
+  - `official_skill`（默认）：逐字注入官方 Skill，字段名、段落顺序、标签规则、时序记号、声音规则一律不可改动；`language=zh` 时只允许把描述性正文中文化。
+  - `h3_standard`：沿用节点自带的六段式提示词，**不加载官方 Skill**，与旧版本行为一致。
+  - `visual_only`：同样基于官方 Skill，但**剔除 `overall_soundscape` 与 `non_diegetic_music` 两段**，只输出画面描述。
 
 - **节点独立运行按钮 (Standalone Optimization Button)**:
   - 节点底部配备 **`▶ 运行提示词优化`** 按钮。
@@ -56,10 +63,17 @@ A high-performance local multimodal prompt optimization node designed for [Comfy
 - `language`: 输出语言选择（`zh` 中文 / `en` 英文，默认中文）。
 - `local_model`: 选择已放置在 `models/LLM` 下的 GGUF 大模型。
 - `local_mmproj`: 选择配套的视觉投影权重（`none` 表示纯文本模式）。
-- `task_type`: 生成任务模式（`Ref2VA` 参考生视频 / `T2VA` 文生视频 / `I2VA` 图生视频 等）。
+- `task_type`: 生成任务模式，决定用官方 Skill 的哪份参考指南与段落结构。
+  - `Ref2VA` → 六段式（`references/ref-en.txt`）
+  - `T2VA` / `I2VA` / `FL2VA` / `L2VA` → 三段式（`references/base-en.txt`），其中 `I2VA` / `FL2VA` / `L2VA` 强制首行输出首/尾帧对齐指令
+  - `Auto` → 有参考图按 `Ref2VA`，无参考图按 `T2VA`
 - `duration_seconds`: 目标视频时长（自动决定多镜头分段密度）。
 - `shot_count`: 镜头数量（`AUTO` 智能自适应 / `1`~`5` 指定分镜数）。
 - `rewrite_mode`: 改写策略（`balanced` 平衡 / `strict` 严格忠实 / `creative` 创意发散）。
+- `output_style`: 输出风格。
+  - `official_skill`（默认）→ 逐字注入官方 H3 Skill 快照
+  - `h3_standard` → 节点自带六段式提示词，不加载官方 Skill（旧版行为）
+  - `visual_only` → 官方 Skill 基础上去掉两个音频段，只留画面
 - `local_unload_policy`: 显存释放策略（默认 `unload_after_run` 跑完即卸载）。
 
 ---
@@ -80,4 +94,10 @@ A high-performance local multimodal prompt optimization node designed for [Comfy
 
 ## 📄 开源协议 (License)
 
-Apache-2.0 License
+本项目代码以 **Apache-2.0** 授权，全文见 [`LICENSE`](LICENSE)。
+
+**第三方素材**：`official_skills/h3-prompt-writing/` 是 [MiniMax-AI/MiniMax-H3](https://github.com/MiniMax-AI/MiniMax-H3)
+官方 Skill 的逐字快照，**版权归 MiniMax-AI，不受本项目 Apache-2.0 再授权**。完整声明见
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 与 [`official_skills/H3_NOTICE.md`](official_skills/H3_NOTICE.md)。
+
+本仓库**不打包、不再分发**任何模型权重（GGUF / safetensors）。
