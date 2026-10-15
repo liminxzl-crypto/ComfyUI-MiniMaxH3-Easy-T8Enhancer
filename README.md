@@ -76,6 +76,18 @@ A high-performance local multimodal prompt optimization node designed for [Comfy
   - `visual_only` → 官方 Skill 基础上去掉两个音频段，只留画面
 - `local_unload_policy`: 显存释放策略（默认 `unload_after_run` 跑完即卸载）。
 
+### ▶ 只运行本节点（不跑下游视频）
+
+节点底部的 `▶ 运行提示词优化` 按钮（或右键节点 → 同名菜单项）会以
+`partial_execution_targets` 只提交本节点：本节点的上游照常执行，**下游的视频生成整条链路会被剪掉**，
+通常几十秒结束，而不是跑完整工作流。
+
+- 按钮提交前会自动清空 `optimized_text`，确保真的重新调用模型
+- 运行中按钮变为「⏳ 正在优化提示词（只跑本节点）…」，失败会弹窗并写 `console.error`
+- 结果仍由节点自身回填到 `optimized_text`，并同步给下游 `MiniMaxH3Easy` 的 prompt
+
+> 该按钮不依赖 `app.queuePrompt` 的第三个参数（其形态在版本间变过，旧写法可能被静默忽略而退化成整图运行）。
+
 ---
 
 ## 🛠️ 安装方法 (Installation)
