@@ -76,6 +76,21 @@ A high-performance local multimodal prompt optimization node designed for [Comfy
   - `visual_only` → 官方 Skill 基础上去掉两个音频段，只留画面
 - `local_unload_policy`: 显存释放策略（默认 `unload_after_run` 跑完即卸载）。
 
+### 🎚 参考媒体上限（对齐 MiniMax H3）
+
+优化器只会绑定 H3 真正吃得下的素材。上限直接对齐 `ComfyUI-MiniMaxH3-Easy/nodes.py`
+（`MAX_IMAGES = 9`、`MAX_VIDEOS = 3`、`MAX_AUDIOS = 3`、`MAX_MEDIA = 15`），单次参考生成：
+
+| 媒体 | 上限 | 优化器如何处理 |
+|---|---|---|
+| 图片 | 9 张 | 全部送入视觉模型，按 `<Picture 1>` … `<Picture 9>` 建立 `<Subject N>` 绑定 |
+| 视频 | 3 段 | 只取每段**首帧**送入视觉模型并标为 `<Video N>`；运动、节奏、时长取你的文字描述，不臆造帧外细节 |
+| 音频 | 3 条 | 无法试听，只声明 `<Audio N>`；视频自带音轨会自动占用一个 Audio 编号，不会重复创建 |
+| 合计 | 15 个 | 超限时优化器直接报错并指出超了哪一类，下游 `MiniMaxH3Easy` 也会抛错，必须先删减素材 |
+
+- Context Segments 的共享素材库可放 27 张图，但**每个片段生成仍受 9 / 3 / 3 限制**
+- 超出上限时优化器如实告警，不会把第 10 张图标成 `<Picture 10>` 去骗下游
+
 ### ▶ 只运行本节点（不跑下游视频）
 
 节点底部的 `▶ 运行提示词优化` 按钮（或右键节点 → 同名菜单项）会以

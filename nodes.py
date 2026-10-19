@@ -1,11 +1,11 @@
 import torch
 
 try:
-    from .bundle_parser import collect_all_reference_images, extract_media_from_bundle
+    from .bundle_parser import describe_media, extract_media_from_bundle
     from .qwen_vision_engine import get_llm_model_list, get_mmproj_list, generate_optimized_prompt
     from . import official_skill
 except ImportError:
-    from bundle_parser import collect_all_reference_images, extract_media_from_bundle
+    from bundle_parser import describe_media, extract_media_from_bundle
     from qwen_vision_engine import get_llm_model_list, get_mmproj_list, generate_optimized_prompt
     import official_skill
 
@@ -104,19 +104,31 @@ class MiniMaxH3EasyLocalPromptOptimizer:
         first_frame=None,
         last_frame=None,
     ):
-        pil_images = collect_all_reference_images(
+        # 按 MiniMax H3 的媒体上限（9 图 / 3 视频 / 3 音频，合计 15）整理素材，
+        # 同时得到“视觉模型实际能看哪些帧”和“提示词里能绑定哪些标签”。
+        media = describe_media(
             media_bundle=media_bundle,
             image=image,
             first_frame=first_frame,
             last_frame=last_frame,
         )
+        vision_items = media["vision_items"]
+
+        if media["violations"] and not optimized_text.strip():
+            raise ValueError(
+                "素材箱超出 MiniMax H3 单次参考上限（9 张图 / 3 段视频 / 3 条音频，合计 15 个媒体资源）："
+                + "；".join(media["violations"])
+                + "。请先删减素材再运行，否则下游 MiniMaxH3Easy 节点必然报错。"
+            )
 
         if optimized_text.strip():
             enhanced = optimized_text
         else:
             enhanced = generate_optimized_prompt(
                 prompt=prompt,
-                reference_images=pil_images,
+                reference_images=[item["image"] for item in vision_items],
+                vision_items=vision_items,
+                media_inventory=media,
                 model_name=local_model,
                 mmproj_name=local_mmproj,
                 language=language,

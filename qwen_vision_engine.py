@@ -8,8 +8,16 @@ from PIL import Image
 
 try:
     from . import official_skill
+    from .bundle_parser import H3_MAX_AUDIOS, H3_MAX_IMAGES, H3_MAX_MEDIA, H3_MAX_VIDEOS
 except ImportError:  # loaded as a top-level module (tests, direct scripts)
     import official_skill
+    from bundle_parser import H3_MAX_AUDIOS, H3_MAX_IMAGES, H3_MAX_MEDIA, H3_MAX_VIDEOS
+
+# MiniMax H3 hard limits for ONE reference generation live in bundle_parser and
+# mirror ComfyUI-MiniMaxH3-Easy/nodes.py (9 images + 3 videos + 3 audio clips,
+# 15 media resources in total). Re-exported here for callers of this module.
+MAX_REFERENCE_IMAGES = H3_MAX_IMAGES
+
 
 def _llm_directories():
     import folder_paths
@@ -64,7 +72,103 @@ def pil_to_base64_data_url(image: Image.Image, max_dim: int = 768) -> str:
     return f"data:image/jpeg;base64,{b64}"
 
 
-def _build_system_prompt_zh(num_pictures: int) -> str:
+def _inventory_block(inventory: Optional[dict], language: str = "zh") -> str:
+    """Describe exactly which media H3 will receive, within H3's per-type caps.
+
+    Only pictures (and one representative frame per video) are actually visible
+    to the local model; audio and video motion must come from the user's text.
+    """
+    if not inventory:
+        return ""
+
+    pictures = int(inventory.get("pictures", 0))
+    videos = int(inventory.get("videos", 0))
+    audios = int(inventory.get("audios", 0))
+    pairs = inventory.get("video_audio_pairs") or []
+    keyframes = [
+        item["tag"]
+        for item in inventory.get("vision_items", [])
+        if item.get("kind") in ("first_frame", "last_frame")
+    ]
+
+    video_audio_count = len(pairs)
+    lines_zh = [
+        "【素材箱媒体清单】（MiniMax H3 单次参考上限：图片 9 张 / 视频 3 段 / 音频 3 条，合计不超过 15 个媒体资源）"
+    ]
+    if pictures:
+        lines_zh.append(f"- 参考图片 {pictures} 张：<Picture 1> … <Picture {pictures}>，已作为图像附件提供，可逐一分析。")
+    if videos:
+        tags = "、".join(f"<Video {i}>" for i in range(1, videos + 1))
+        lines_zh.append(
+            f"- 参考视频 {videos} 段：{tags}。每段只提供了首帧画面；视频的运动、节奏与时长必须依据用户初始文本描述，"
+            f"不得臆造首帧之外的画面细节。"
+        )
+    for v_idx, a_idx in pairs:
+        lines_zh.append(
+            f"- <Video {v_idx}> 自带音轨，已由素材自动绑定为 <Audio {a_idx}>：直接引用该编号，不要为它另造 <Audio n>。"
+        )
+    if audios:
+        start = video_audio_count + 1
+        tags = "、".join(f"<Audio {i}>" for i in range(start, start + audios))
+        lines_zh.append(
+            f"- 独立参考音频 {audios} 条：{tags}。音频无法试听，其音色与内容只能引用用户初始文本的描述，"
+            f"不得编造具体歌词或对白内容。"
+        )
+    if keyframes:
+        lines_zh.append(
+            f"- 关键帧：{'、'.join(keyframes)}。关键帧不作为 <Picture N> 资产使用，也不是 <Subject N> 的身份来源。"
+        )
+    if not (pictures or videos or audios):
+        lines_zh.append("- 素材箱未连接任何参考媒体：请只依据用户初始文本生成提示词，不要创建 <Picture N>/<Video N>/<Audio N> 标签。")
+
+    violations = inventory.get("violations") or []
+    if violations:
+        lines_zh.append(
+            "- 超限警告（素材箱超出 H3 单次上限，下游 H3 节点会直接报错，请提示用户删减）："
+            + "；".join(violations)
+        )
+
+    if language == "zh":
+        return "\n".join(lines_zh)
+
+    lines_en = [
+        "[MEDIA INVENTORY] (MiniMax H3 per-generation caps: 9 images, 3 videos, 3 audio clips, 15 media resources in total)"
+    ]
+    if pictures:
+        lines_en.append(
+            f"- {pictures} reference image(s): <Picture 1> .. <Picture {pictures}>, supplied as image attachments and fully analysable."
+        )
+    if videos:
+        tags = ", ".join(f"<Video {i}>" for i in range(1, videos + 1))
+        lines_en.append(
+            f"- {videos} reference video(s): {tags}. Only one representative frame per video is attached; take motion, "
+            f"pacing and duration from the user's text, never invent off-frame details."
+        )
+    for v_idx, a_idx in pairs:
+        lines_en.append(
+            f"- <Video {v_idx}> carries its own soundtrack, auto-bound as <Audio {a_idx}>: reuse that label, never mint a new <Audio n> for it."
+        )
+    if audios:
+        start = video_audio_count + 1
+        tags = ", ".join(f"<Audio {i}>" for i in range(start, start + audios))
+        lines_en.append(
+            f"- {audios} standalone audio clip(s): {tags}. Audio cannot be listened to; describe timbre and content only from the user's text, never invent lyrics or dialogue."
+        )
+    if keyframes:
+        lines_en.append(
+            f"- Keyframe(s): {', '.join(keyframes)}. Keyframes are structural inputs, not <Picture N> assets and not identity sources for <Subject N>."
+        )
+    if not (pictures or videos or audios):
+        lines_en.append("- No reference media attached: write from the user's text only and create no <Picture N>/<Video N>/<Audio N> tags.")
+    if violations:
+        lines_en.append(
+            "[LIMIT BREACH] The media bin exceeds H3's per-generation caps; the downstream H3 node will raise an error until it is trimmed: "
+            + "; ".join(violations)
+        )
+    return "\n".join(lines_en)
+
+
+def _build_system_prompt_zh(num_pictures: int, media_inventory: Optional[dict] = None) -> str:
     """构建中文系统提示词：以初始文本的语义环境和叙事基调为最高准则进行最标准的六段式影视级扩写。
     先不做任何主观风格/剧情限定，完全顺应并深化初始文本的意图；除非初始文本有明确要求，才进行对应定制。
     """
@@ -96,6 +200,9 @@ def _build_system_prompt_zh(num_pictures: int) -> str:
             f"你必须在 subject_definitions 中严格建立绑定：{tags}。"
             f"在 detailed_description 中，凡是该主体出场必须使用 <Subject N> 标签精准引用。"
         )
+    inventory_block = _inventory_block(media_inventory, "zh")
+    if inventory_block:
+        binding_rule = f"{binding_rule}\n{inventory_block}" if binding_rule else f"\n{inventory_block}"
 
     return f"""你是由 MiniMax 官方 Hailuo 3 (H3) 认证的顶级影视提示词导演与剧本专家。
 你的任务是：深度理解用户初始文本的【语义环境、情绪基调、叙事逻辑与场景氛围】，并结合提供的参考图片，进行最专业、最标准、最契合原意的 MiniMax H3 影视六段式提示词扩写。
@@ -136,7 +243,7 @@ non_diegetic_music:
 """
 
 
-def _build_system_prompt_en(num_pictures: int) -> str:
+def _build_system_prompt_en(num_pictures: int, media_inventory: Optional[dict] = None) -> str:
     """Build English system prompt with dynamic Subject/Picture bindings."""
     subject_defs = []
     retention_items = []
@@ -166,6 +273,9 @@ def _build_system_prompt_en(num_pictures: int) -> str:
             f"You MUST establish these bindings in subject_definitions: {tags}. "
             f"In detailed_description, always use <Subject N> tags when the subject appears."
         )
+    inventory_block = _inventory_block(media_inventory, "en")
+    if inventory_block:
+        binding_rule = f"{binding_rule}\n{inventory_block}" if binding_rule else f"\n{inventory_block}"
 
     return f"""You are the official MiniMax Hailuo 3 (H3) prompt director.
 Your task is to analyze the user's creative concept and reference images, producing a strict official H3 Ref2VA prompt.
@@ -239,16 +349,22 @@ def _official_alignment_rule(task_type: str) -> str:
     )
 
 
-def _official_binding_rule(task_type: str, num_pictures: int) -> str:
-    if not official_skill.is_reference_mode(task_type) or num_pictures <= 0:
-        return ""
-    tags = ", ".join(f"<Subject {i}>↔<Picture {i}>" for i in range(1, num_pictures + 1))
-    return (
-        f"- REFERENCE BINDING: {num_pictures} reference image(s) are attached. Establish these bindings "
-        f"on their own lines inside `subject_definitions`: {tags}. Cite `<Subject N>` in "
-        f"`detailed_description` every time that subject appears, and never reuse a label for a different "
-        f"piece of content."
-    )
+def _official_binding_rule(
+    task_type: str, num_pictures: int, media_inventory: Optional[dict] = None
+) -> str:
+    lines = []
+    if official_skill.is_reference_mode(task_type) and num_pictures > 0:
+        tags = ", ".join(f"<Subject {i}>↔<Picture {i}>" for i in range(1, num_pictures + 1))
+        lines.append(
+            f"- REFERENCE BINDING: {num_pictures} reference image(s) are attached. Establish these bindings "
+            f"on their own lines inside `subject_definitions`: {tags}. Cite `<Subject N>` in "
+            f"`detailed_description` every time that subject appears, and never reuse a label for a different "
+            f"piece of content."
+        )
+    inventory_block = _inventory_block(media_inventory, "en")
+    if inventory_block:
+        lines.append(inventory_block)
+    return "\n".join(lines)
 
 
 def _official_language_rule(language: str, visual_only: bool) -> str:
@@ -304,6 +420,7 @@ def _build_official_skill_prompt(
     shot_count: str,
     rewrite_mode: str,
     visual_only: bool,
+    media_inventory: Optional[dict] = None,
 ) -> str:
     mode = official_skill.normalize_task_type(task_type)
     skill_md, guide_name, guide_text = official_skill.load_skill_bundle(mode)
@@ -315,15 +432,22 @@ def _build_official_skill_prompt(
 
     rules = [
         _official_alignment_rule(mode),
-        _official_binding_rule(mode, num_pictures),
+        _official_binding_rule(mode, num_pictures, media_inventory),
         _official_language_rule(language, visual_only),
         f"- SECTION ORDER: emit exactly these {len(sections)} section(s), in this order: {section_list}. "
         f"Each header is lowercase and followed by a colon.",
         f"- TIMING: the described audiovisual timeline must fill the requested {duration_seconds} seconds "
         f"without over- or under-running it.",
+        f"- MEDIA BUDGET: H3 accepts at most {H3_MAX_IMAGES} images, {H3_MAX_VIDEOS} videos and "
+        f"{H3_MAX_AUDIOS} audio clips per generation ({H3_MAX_MEDIA} media resources in total). "
+        f"Never reference a higher index than the inventory allows.",
         "- OUTPUT: plain text only. No JSON, no markdown code fences, no preamble, no trailing commentary.",
     ]
     rule_block = "\n".join(line for line in rules if line)
+
+    inv = media_inventory or {}
+    attached_videos = int(inv.get("videos", 0))
+    attached_audios = int(inv.get("audios", 0)) + len(inv.get("video_audio_pairs") or [])
 
     return f"""You are a MiniMax H3 prompt writer. The official MiniMax H3 prompt-writing Skill is reproduced below VERBATIM and is the sole authority for this task: obey its structure, field names, section order, label rules, timing notation, and sound rules exactly.
 
@@ -343,6 +467,8 @@ def _build_official_skill_prompt(
 - Shot count: {shot_count}
 - Rewrite mode: {rewrite_mode}
 - Reference images attached: {num_pictures}
+- Reference videos attached: {attached_videos}
+- Reference audio clips attached: {attached_audios}
 {rule_block}
 
 {_official_language_lock(language)}Produce the final H3 prompt now."""
@@ -357,11 +483,16 @@ def build_system_prompt(
     duration_seconds: int = 5,
     shot_count: str = "AUTO",
     rewrite_mode: str = "balanced",
+    media_inventory: Optional[dict] = None,
 ) -> str:
     """Select the system prompt for the requested output style."""
     style = official_skill.normalize_output_style(output_style)
     if style == "h3_standard":
-        return _build_system_prompt_en(num_pictures) if language == "en" else _build_system_prompt_zh(num_pictures)
+        return (
+            _build_system_prompt_en(num_pictures, media_inventory)
+            if language == "en"
+            else _build_system_prompt_zh(num_pictures, media_inventory)
+        )
     return _build_official_skill_prompt(
         task_type=task_type,
         language=language,
@@ -370,6 +501,7 @@ def build_system_prompt(
         shot_count=shot_count,
         rewrite_mode=rewrite_mode,
         visual_only=(style == "visual_only"),
+        media_inventory=media_inventory,
     )
 
 
@@ -491,7 +623,40 @@ def generate_optimized_prompt(
     max_tokens: int = 4096,
     seed: int = 0,
     unload_after_run: bool = True,
+    vision_items: Optional[List[dict]] = None,
+    media_inventory: Optional[dict] = None,
 ) -> str:
+    if vision_items is None:
+        vision_items = [
+            {"tag": f"<Picture {i}>", "kind": "image", "image": img}
+            for i, img in enumerate(reference_images[:H3_MAX_IMAGES], start=1)
+        ]
+    reference_images = [item["image"] for item in vision_items]
+    num_pictures = sum(1 for item in vision_items if item.get("kind") == "image")
+
+    if media_inventory is None:
+        media_inventory = {
+            "pictures": num_pictures,
+            "videos": 0,
+            "audios": 0,
+            "video_audio_pairs": [],
+            "raw": {"images": num_pictures, "videos": 0, "audios": 0, "total": num_pictures},
+            "violations": [],
+        }
+
+    raw = media_inventory.get("raw") or {}
+    print(
+        f"[Easy-T8Enhancer] media: {raw.get('images', num_pictures)} image(s), "
+        f"{raw.get('videos', 0)} video(s), {raw.get('audios', 0)} audio clip(s) "
+        f"(H3 caps: {H3_MAX_IMAGES}/{H3_MAX_VIDEOS}/{H3_MAX_AUDIOS}, total {H3_MAX_MEDIA}); "
+        f"analysed images={len(reference_images)}"
+    )
+    for violation in media_inventory.get("violations") or []:
+        print(
+            f"[Easy-T8Enhancer] LIMIT BREACH: {violation} — the downstream MiniMaxH3Easy node "
+            f"rejects reference mode above these caps. Trim the media bin."
+        )
+
     model_path = _resolve_model_path(model_name)
     if model_path is None:
         raise FileNotFoundError(f"Local LLM model not found: {model_name}")
@@ -522,10 +687,9 @@ def generate_optimized_prompt(
     }
     llm = Llama(**llama_kwargs)
 
-    # 根据实际素材数量动态构建系统提示词
-    num_pictures = min(len(reference_images), 3)
+    # 根据实际素材动态构建系统提示词，上限严格对齐 MiniMax H3（图 9 / 视频 3 / 音频 3，合计 15）
     resolved_task_type = official_skill.resolve_task_type(
-        task_type, has_reference_images=bool(reference_images)
+        task_type, has_reference_images=bool(vision_items)
     )
     resolved_style = official_skill.normalize_output_style(output_style)
     system_prompt = build_system_prompt(
@@ -536,6 +700,7 @@ def generate_optimized_prompt(
         duration_seconds=duration_seconds,
         shot_count=shot_count,
         rewrite_mode=rewrite_mode,
+        media_inventory=media_inventory,
     )
     print(
         f"[Easy-T8Enhancer] output_style={resolved_style} "
@@ -549,21 +714,35 @@ def generate_optimized_prompt(
         else official_skill.sections_for_style(resolved_task_type, resolved_style)
     )
 
-    # 构建用户消息：每张图单独一个 image_url 条目
+    # 构建用户消息：每个视觉素材单独一个 image_url 条目，附件顺序与标签顺序严格一致
     user_content = []
-    for idx, img in enumerate(reference_images[:3]):
-        data_url = pil_to_base64_data_url(img)
+    for item in vision_items:
+        data_url = pil_to_base64_data_url(item["image"])
         user_content.append({"type": "image_url", "image_url": {"url": data_url}})
 
     # 构建素材绑定映射说明
-    if num_pictures > 0:
+    video_count = int(media_inventory.get("videos", 0))
+    audio_count = int(media_inventory.get("audios", 0))
+    if num_pictures or video_count or audio_count:
         binding_lines = []
         for i in range(1, num_pictures + 1):
             binding_lines.append(f"  <Picture {i}> = @图片{i}（素材箱第{i}张图）→ 绑定为 <Subject {i}>")
+        for i in range(1, video_count + 1):
+            binding_lines.append(f"  <Video {i}> = 素材箱第{i}段参考视频（只提供了首帧画面）")
+        video_audio_count = len(media_inventory.get("video_audio_pairs") or [])
+        for i in range(1, audio_count + 1):
+            binding_lines.append(f"  <Audio {video_audio_count + i}> = 第{i}条独立参考音频（无法试听）")
+        for tag in ("<First Frame>", "<Last Frame>"):
+            if any(item.get("tag") == tag for item in vision_items):
+                binding_lines.append(f"  {tag} = 关键帧输入（不是 <Picture N> 资产）")
         binding_map = "\n".join(binding_lines)
-        material_info = f"素材箱已连接 {num_pictures} 张参考图，绑定关系如下：\n{binding_map}\n"
+        material_info = (
+            f"素材箱已连接 {num_pictures} 张参考图、{video_count} 段参考视频、{audio_count} 条独立参考音频，"
+            f"共 {num_pictures + video_count + audio_count} 个媒体资源"
+            f"（H3 单次上限：9 图 / 3 视频 / 3 音频，合计 15）。绑定关系如下：\n{binding_map}\n"
+        )
     else:
-        material_info = "素材箱未连接参考图，请根据用户描述生成纯文字提示词。\n"
+        material_info = "素材箱未连接参考媒体，请根据用户描述生成纯文字提示词。\n"
 
     lang_desc = "中文 (Chinese)" if language == "zh" else "English"
     instructions = (
@@ -584,7 +763,12 @@ def generate_optimized_prompt(
         {"role": "user", "content": user_content},
     ]
 
-    print(f"[Easy-T8Enhancer] Generating prompt ({num_pictures} reference images)...")
+    print(
+        f"[Easy-T8Enhancer] Generating prompt ({num_pictures} picture(s), "
+        f"{video_count} video(s), {audio_count} audio clip(s); "
+        f"{len(vision_items)} vision input(s))..."
+    )
+
     from comfy.model_management import throw_exception_if_processing_interrupted
 
     result_text = ""
